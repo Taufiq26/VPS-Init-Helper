@@ -2003,9 +2003,9 @@ main() {
   install_monit
   install_logwatch
   install_aide
-  install_lynis
 
   write_helper_scripts
+  install_lynis
   generate_report
   generate_security_md
   generate_migration_md
