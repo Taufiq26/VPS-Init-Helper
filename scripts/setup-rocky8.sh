@@ -573,6 +573,30 @@ REPO_EOF
 
   systemctl enable --now mongod >/dev/null 2>&1
 
+  # MongoDB's FTDC (background diagnostics collector, samples every ~1s)
+  # membaca beberapa path /proc/sys yang tidak diizinkan oleh SELinux policy
+  # default paket mongodb-org di Rocky/RHEL, menyebabkan ribuan AVC denial per
+  # jam dan bikin setroubleshootd makan CPU terus-menerus. Generate custom
+  # policy otomatis di sini (permissive learning mode sebentar) supaya tidak
+  # kejadian di produksi.
+  if command_exists getenforce && [ "$(getenforce)" = "Enforcing" ]; then
+    log_step "Menyesuaikan SELinux policy untuk MongoDB FTDC"
+    systemctl is-active --quiet auditd || systemctl enable --now auditd >/dev/null 2>&1
+    if command_exists semanage && command_exists ausearch && command_exists audit2allow; then
+      semanage permissive -a mongod_t 2>/dev/null || true
+      sleep 15
+      (
+        cd "$(mktemp -d)" || exit 0
+        ausearch -m avc -ts recent -c ftdc 2>/dev/null | audit2allow -M mongod-ftdc-fix >/dev/null 2>&1
+        [ -f mongod-ftdc-fix.pp ] && semodule -i mongod-ftdc-fix.pp 2>/dev/null
+      )
+      semanage permissive -d mongod_t 2>/dev/null || true
+      log_info "SELinux: policy tambahan untuk MongoDB FTDC otomatis di-generate (mencegah CPU tinggi di setroubleshootd)."
+    else
+      log_warn "semanage/ausearch/audit2allow tidak ditemukan, lewati penyesuaian SELinux FTDC (bisa muncul CPU tinggi di setroubleshootd nanti, lihat security.md)."
+    fi
+  fi
+
   local mongo_password
   prompt_password_confirmed mongo_password "Password untuk MongoDB admin user"
   local bs_squote=$'\\\''
