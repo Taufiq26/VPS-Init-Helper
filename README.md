@@ -24,7 +24,7 @@ Untuk Debian/Ubuntu, `setup.sh` sendirian tetap cukup seperti biasa.
 - Update sistem + paket dasar (curl, wget, git, unzip, dll)
 - Swapfile otomatis kalau RAM kecil
 - User sudo baru + SSH key (pengganti akses root)
-- UFW (firewall) — default deny, hanya buka port SSH/80/443, opsi membatasi 80/443 hanya dari IP Cloudflare
+- UFW (firewall) — default deny, hanya buka port SSH/80/443, opsi membatasi 80/443 hanya dari IP Cloudflare (kalau diaktifkan, daftar IP Cloudflare di-refresh otomatis tiap minggu lewat `scripts/refresh-cloudflare-ips.sh`, supaya tidak basi kalau Cloudflare menambah/mengubah IP mereka)
 - fail2ban (jail sshd)
 - nginx
 - Database/storage — **interaktif, pilih satu atau lebih**: MySQL/MariaDB, PostgreSQL, MongoDB, Redis, MinIO (S3-compatible object storage, AGPLv3 — systemd service, API port 9000 + Console port 9001)
