@@ -675,6 +675,32 @@ MINIO_UNIT_EOF
   return 0
 }
 
+install_redis() {
+  if is_done "redis_install"; then
+    log_info "Redis sudah pernah di-setup sebelumnya, lewati."
+    INSTALLED_ITEMS+=("Redis (sudah ada sebelumnya)")
+    return 0
+  fi
+  log_step "Install Redis"
+  dnf_install_if_missing redis
+  systemctl enable --now redis >/dev/null 2>&1
+
+  local redis_conf="/etc/redis/redis.conf"
+  [ -f "$redis_conf" ] || redis_conf="/etc/redis.conf"
+
+  local redis_password
+  prompt_password_confirmed redis_password "Password Redis (requirepass) baru"
+
+  sed -i -E '/^\s*requirepass\s+/d' "$redis_conf"
+  printf 'requirepass %s\n' "$redis_password" >> "$redis_conf"
+  systemctl restart redis
+
+  mark_done "redis_install"
+  INSTALLED_ITEMS+=("Redis — requirepass sudah diset (SIMPAN sendiri, tidak disimpan script ini), bind 127.0.0.1 (default paket)")
+  log_info "Redis aktif, requirepass sudah diset. SIMPAN baik-baik, script ini tidak menyimpannya."
+  return 0
+}
+
 select_and_install_databases() {
   log_step "Pemilihan database & storage"
   local ans
@@ -686,6 +712,8 @@ select_and_install_databases() {
   [[ "$ans" =~ ^[Yy]$ ]] && SELECTED_DBS+=("mongodb")
   read -rp "Install MinIO (S3-compatible object storage, AGPLv3)? [y/N]: " ans
   [[ "$ans" =~ ^[Yy]$ ]] && SELECTED_DBS+=("minio")
+  read -rp "Install Redis? [y/N]: " ans
+  [[ "$ans" =~ ^[Yy]$ ]] && SELECTED_DBS+=("redis")
 
   if [ ${#SELECTED_DBS[@]} -eq 0 ]; then
     log_info "Tidak ada database/storage dipilih, melewati langkah ini."
@@ -699,6 +727,7 @@ select_and_install_databases() {
       postgresql) if ! install_postgresql; then log_warn "Instalasi PostgreSQL gagal, lanjut ke langkah berikutnya."; fi ;;
       mongodb)    if ! install_mongodb; then log_warn "Instalasi MongoDB gagal, lanjut ke langkah berikutnya."; fi ;;
       minio)      if ! install_minio; then log_warn "Instalasi MinIO gagal, lanjut ke langkah berikutnya."; fi ;;
+      redis)      if ! install_redis; then log_warn "Instalasi Redis gagal, lanjut ke langkah berikutnya."; fi ;;
     esac
   done
 }
@@ -862,6 +891,9 @@ install_monit() {
     fi
     if is_done "minio_install"; then
       monit_process_block "minio" "minio server" "minio"
+    fi
+    if is_done "redis_install"; then
+      monit_process_block "redis" "redis-server" "redis"
     fi
   } > "$conf"
 
@@ -1372,6 +1404,10 @@ di \`127.0.0.1\` saja. Kalau kamu memang butuh akses remote ke database, baru:
   serupa dengan firewalld dibatasi IP tertentu.
 - **MongoDB**: edit \`bindIp\` di \`/etc/mongod.conf\`, buka port serupa dengan
   firewalld dibatasi IP tertentu.
+- **Redis**: sudah bind ke \`127.0.0.1\` secara default (paket redis), tidak
+  perlu diubah kecuali memang butuh akses remote — kalau begitu, edit \`bind\`
+  di \`/etc/redis/redis.conf\` (atau \`/etc/redis.conf\`), lalu buka port serupa
+  dengan firewalld dibatasi IP tertentu.
 - **MinIO**: MinIO sendiri listen di semua interface (\`0.0.0.0:9000\`/\`9001\`),
   tapi port API (9000) dan Console (9001) **belum dibuka di firewalld** secara
   default — sama seperti database. Kalau butuh akses S3 API atau Console dari
@@ -1587,6 +1623,8 @@ generate_client_report() {
 " ;;
       minio) db_list="${db_list}- MinIO (Object Storage, S3-compatible, AGPLv3)
 " ;;
+      redis) db_list="${db_list}- Redis
+" ;;
     esac
   done
   [ -z "$db_list" ] && db_list="Tidak ada database yang diinstall pada server ini."
@@ -1685,6 +1723,7 @@ generate_client_report_html() {
       postgresql) db_items="${db_items}<li>PostgreSQL</li>" ;;
       mongodb) db_items="${db_items}<li>MongoDB</li>" ;;
       minio) db_items="${db_items}<li>MinIO (Object Storage, S3-compatible, AGPLv3)</li>" ;;
+      redis) db_items="${db_items}<li>Redis</li>" ;;
     esac
   done
   [ -z "$db_items" ] && db_items="<li>Tidak ada database yang diinstall pada server ini</li>"

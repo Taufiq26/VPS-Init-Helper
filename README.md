@@ -27,7 +27,7 @@ Untuk Debian/Ubuntu, `setup.sh` sendirian tetap cukup seperti biasa.
 - UFW (firewall) — default deny, hanya buka port SSH/80/443, opsi membatasi 80/443 hanya dari IP Cloudflare
 - fail2ban (jail sshd)
 - nginx
-- Database/storage — **interaktif, pilih satu atau lebih**: MySQL/MariaDB, PostgreSQL, MongoDB, MinIO (S3-compatible object storage, AGPLv3 — systemd service, API port 9000 + Console port 9001)
+- Database/storage — **interaktif, pilih satu atau lebih**: MySQL/MariaDB, PostgreSQL, MongoDB, Redis, MinIO (S3-compatible object storage, AGPLv3 — systemd service, API port 9000 + Console port 9001)
 - Docker + Docker Compose plugin
 - nvm + Node.js LTS + PM2 (jalan sebagai user baru, bukan root)
 - htop, tmux, ncdu, net-tools, unattended-upgrades
