@@ -208,7 +208,7 @@ system_update() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get upgrade -y
-  apt_install_if_missing curl wget git unzip gnupg ca-certificates software-properties-common apt-transport-https lsb-release
+  apt_install_if_missing curl wget git unzip gnupg ca-certificates apt-transport-https lsb-release
   INSTALLED_ITEMS+=("System update + paket dasar (curl, wget, git, unzip, gnupg, dll)")
 }
 
