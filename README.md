@@ -27,7 +27,7 @@ Untuk Debian/Ubuntu, `setup.sh` sendirian tetap cukup seperti biasa.
 - UFW (firewall) — default deny, hanya buka port SSH/80/443, opsi membatasi 80/443 hanya dari IP Cloudflare (kalau diaktifkan, daftar IP Cloudflare di-refresh otomatis tiap minggu lewat `scripts/refresh-cloudflare-ips.sh`, supaya tidak basi kalau Cloudflare menambah/mengubah IP mereka)
 - fail2ban (jail sshd)
 - nginx
-- Database/storage — **interaktif, pilih satu atau lebih**: MySQL/MariaDB, PostgreSQL, MongoDB, Redis, MinIO (S3-compatible object storage, AGPLv3 — systemd service, API port 9000 + Console port 9001)
+- Database/storage — **interaktif, pilih satu atau lebih**: MySQL/MariaDB, PostgreSQL, MongoDB, Redis, MinIO (S3-compatible object storage, AGPLv3 — systemd service, API port 9000 + Console port 9001; kalau binary resmi gagal diunduh karena `dl.min.io` sudah tidak mendistribusikannya, otomatis fallback ke fork komunitas pgsty/minio via Docker, hanya 127.0.0.1)
 - Docker + Docker Compose plugin
 - nvm + Node.js LTS + PM2 (jalan sebagai user baru, bukan root)
 - htop, tmux, ncdu, net-tools, unattended-upgrades

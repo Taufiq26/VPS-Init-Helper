@@ -599,26 +599,24 @@ install_mongodb() {
   return 0
 }
 
-install_minio() {
-  if is_done "minio_install"; then
-    log_info "MinIO sudah pernah di-setup sebelumnya, lewati."
-    INSTALLED_ITEMS+=("MinIO (sudah ada sebelumnya)")
-    return 0
-  fi
-  log_step "Install MinIO (AGPLv3 — Community Edition)"
+# Fallback kalau binary resmi tidak bisa diunduh (dl.min.io sekarang membalas
+# 410 karena Community Edition hanya didistribusikan sebagai source): jalankan
+# fork komunitas pgsty/minio sebagai container Docker yang dibungkus systemd.
+MINIO_DOCKER_IMAGE="${MINIO_IMAGE:-pgsty/minio:latest}"
 
-  local arch
-  case "$(uname -m)" in
-    x86_64)  arch="amd64" ;;
-    aarch64) arch="arm64" ;;
-    *) log_warn "Arsitektur $(uname -m) tidak didukung binary resmi MinIO. Melewati instalasi MinIO."; return 1 ;;
-  esac
-
-  if ! curl -fsSL "https://dl.min.io/server/minio/release/linux-${arch}/minio" -o /usr/local/bin/minio; then
-    log_warn "Gagal mengunduh binary MinIO. Melewati instalasi MinIO."
+prepare_minio_docker() {
+  if ! install_docker || ! is_done "docker_install"; then
+    log_warn "Fallback MinIO butuh Docker, tapi Docker tidak ter-install."
     return 1
   fi
-  chmod +x /usr/local/bin/minio
+  if ! docker pull "$MINIO_DOCKER_IMAGE"; then
+    log_warn "Gagal menarik image $MINIO_DOCKER_IMAGE."
+    return 1
+  fi
+}
+
+write_minio_binary_service() {
+  local minio_user="$1" minio_password="$2"
 
   getent group minio-user >/dev/null || groupadd -r minio-user
   id minio-user >/dev/null 2>&1 || useradd -M -r -g minio-user -s /usr/sbin/nologin minio-user
@@ -626,23 +624,6 @@ install_minio() {
   mkdir -p /var/lib/minio/data
   chown -R minio-user:minio-user /var/lib/minio
   chmod 750 /var/lib/minio/data
-
-  local minio_user minio_password minio_password2
-  read -rp "Username root MinIO (kosongkan untuk 'minioadmin'): " minio_user
-  minio_user="${minio_user:-minioadmin}"
-  while true; do
-    read -rsp "Password root MinIO baru (min. 8 karakter): " minio_password; echo
-    if [ "${#minio_password}" -lt 8 ]; then
-      log_warn "Password minimal 8 karakter (syarat MinIO)."
-      continue
-    fi
-    read -rsp "Ulangi password: " minio_password2; echo
-    if [ "$minio_password" != "$minio_password2" ]; then
-      log_warn "Password tidak sama, coba lagi."
-      continue
-    fi
-    break
-  done
 
   # EnvironmentFile dibaca systemd (root) sebelum proses drop privilege ke
   # minio-user, jadi chmod 600 root-only sudah cukup (pola sama seperti
@@ -678,13 +659,107 @@ SendSIGKILL=no
 [Install]
 WantedBy=multi-user.target
 MINIO_UNIT_EOF
+}
+
+write_minio_docker_service() {
+  local minio_user="$1" minio_password="$2"
+
+  mkdir -p /var/lib/minio/data
+  chmod 750 /var/lib/minio/data
+
+  # Format env-file Docker (KEY=VALUE mentah, tanpa tanda kutip). Dibaca docker
+  # CLI sebagai root, jadi chmod 600 cukup dan password tidak muncul di `ps`.
+  cat > /etc/default/minio <<EOF
+MINIO_ROOT_USER=${minio_user}
+MINIO_ROOT_PASSWORD=${minio_password}
+EOF
+  chmod 600 /etc/default/minio
+
+  # Port diikat ke 127.0.0.1 (Docker melewati UFW untuk port yang dipublikasikan).
+  # Unit systemd dipertahankan supaya `systemctl status minio` dan blok Monit
+  # tetap berlaku.
+  cat > /etc/systemd/system/minio.service <<MINIO_UNIT_EOF
+[Unit]
+Description=MinIO (Docker, ${MINIO_DOCKER_IMAGE})
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStartPre=-/usr/bin/docker rm -f minio
+ExecStart=/usr/bin/docker run --rm --name minio -p 127.0.0.1:9000:9000 -p 127.0.0.1:9001:9001 --env-file /etc/default/minio -v /var/lib/minio/data:/data ${MINIO_DOCKER_IMAGE} server /data --console-address ":9001"
+ExecStop=/usr/bin/docker stop minio
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
+MINIO_UNIT_EOF
+}
+
+install_minio() {
+  if is_done "minio_install"; then
+    log_info "MinIO sudah pernah di-setup sebelumnya, lewati."
+    INSTALLED_ITEMS+=("MinIO (sudah ada sebelumnya)")
+    return 0
+  fi
+  log_step "Install MinIO (AGPLv3 — Community Edition)"
+
+  local arch
+  case "$(uname -m)" in
+    x86_64)  arch="amd64" ;;
+    aarch64) arch="arm64" ;;
+    *) log_warn "Arsitektur $(uname -m) tidak didukung binary resmi MinIO. Melewati instalasi MinIO."; return 1 ;;
+  esac
+
+  local install_mode="binary"
+  if curl -fsSL "https://dl.min.io/server/minio/release/linux-${arch}/minio" -o /usr/local/bin/minio; then
+    chmod +x /usr/local/bin/minio
+  else
+    rm -f /usr/local/bin/minio
+    log_warn "Gagal mengunduh binary MinIO (dl.min.io sudah tidak mendistribusikan binary Community Edition). Mencoba fallback: fork komunitas pgsty/minio via Docker."
+    if ! prepare_minio_docker; then
+      log_warn "Fallback Docker juga gagal. Melewati instalasi MinIO."
+      return 1
+    fi
+    install_mode="docker"
+  fi
+
+  local minio_user minio_password minio_password2
+  read -rp "Username root MinIO (kosongkan untuk 'minioadmin'): " minio_user
+  minio_user="${minio_user:-minioadmin}"
+  while true; do
+    read -rsp "Password root MinIO baru (min. 8 karakter): " minio_password; echo
+    if [ "${#minio_password}" -lt 8 ]; then
+      log_warn "Password minimal 8 karakter (syarat MinIO)."
+      continue
+    fi
+    read -rsp "Ulangi password: " minio_password2; echo
+    if [ "$minio_password" != "$minio_password2" ]; then
+      log_warn "Password tidak sama, coba lagi."
+      continue
+    fi
+    break
+  done
+
+  if [ "$install_mode" = "docker" ]; then
+    write_minio_docker_service "$minio_user" "$minio_password"
+  else
+    write_minio_binary_service "$minio_user" "$minio_password"
+  fi
 
   systemctl daemon-reload
   systemctl enable --now minio >/dev/null 2>&1
 
   mark_done "minio_install"
-  INSTALLED_ITEMS+=("MinIO (AGPLv3) — API port 9000, Console port 9001, root user: ${minio_user} (password SIMPAN sendiri, tidak disimpan script ini). Port belum dibuka di firewall (default localhost-only, lihat security.md).")
-  log_info "MinIO aktif (systemd service 'minio'). Console: http://<ip-server>:9001 — port belum dibuka firewall, lihat security.md."
+  if [ "$install_mode" = "docker" ]; then
+    INSTALLED_ITEMS+=("MinIO (fallback: fork pgsty/minio via Docker, image ${MINIO_DOCKER_IMAGE}) — API 127.0.0.1:9000, Console 127.0.0.1:9001, root user: ${minio_user} (password SIMPAN sendiri, tidak disimpan script ini). Hanya localhost; akses dari luar lewat nginx reverse proxy.")
+    log_info "MinIO aktif via fallback Docker (systemd service 'minio'). API 127.0.0.1:9000, Console 127.0.0.1:9001 — hanya localhost."
+  else
+    INSTALLED_ITEMS+=("MinIO (AGPLv3) — API port 9000, Console port 9001, root user: ${minio_user} (password SIMPAN sendiri, tidak disimpan script ini). Port belum dibuka di firewall (default localhost-only, lihat security.md).")
+    log_info "MinIO aktif (systemd service 'minio'). Console: http://<ip-server>:9001 — port belum dibuka firewall, lihat security.md."
+  fi
   return 0
 }
 
@@ -1530,6 +1605,10 @@ akses remote ke database, baru:
   luar, buka dengan \`sudo ufw allow from <ip-trusted> to any port 9000,9001\`
   (JANGAN buka ke semua IP kalau bisa dihindari; kalau memang harus publik,
   taruh nginx reverse proxy + TLS di depannya, jangan expose 9000/9001 polos).
+  Kalau binary resmi gagal diunduh dan MinIO terpasang lewat fallback Docker
+  (fork pgsty/minio), port 9000/9001 hanya diikat ke \`127.0.0.1\`. Port yang
+  dipublikasikan Docker melewati UFW, jadi jangan ubah \`127.0.0.1\` di
+  \`/etc/systemd/system/minio.service\` menjadi \`0.0.0.0\` tanpa alasan kuat.
 
 Kalau semua aplikasi kamu jalan di server yang sama (akses via localhost),
 biarkan default ini — jangan buka port DB/MinIO ke publik sama sekali.
